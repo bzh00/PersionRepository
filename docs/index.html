@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Qwen Omni 语音助手</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --fg:#e8eaf0; --dim:#8b93a7; --acc:#4f8cff; --acc2:#22c55e;
+    --warn:#f59e0b; --err:#ef4444;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);color:var(--fg);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex;flex-direction:column;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  header{
+    padding:12px 14px 10px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:10px;background:var(--panel);
+  }
+  header h1{font-size:16px;margin:0;font-weight:600;flex:1}
+  .dot{width:8px;height:8px;border-radius:50%;background:#444;flex:0 0 auto}
+  .dot.on{background:var(--acc2);box-shadow:0 0 8px var(--acc2)}
+  .dot.busy{background:var(--warn);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+
+  #cfg{padding:16px;overflow:auto;flex:1}
+  #cfg label{display:block;font-size:13px;color:var(--dim);margin:14px 0 6px}
+  #cfg input{
+    width:100%;padding:12px 13px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--fg);font-size:15px;font-family:inherit;
+  }
+  #cfg input:focus{outline:none;border-color:var(--acc)}
+  .hint{font-size:12px;color:var(--dim);margin-top:6px;line-height:1.5}
+  .row{display:flex;gap:10px}
+  .row>*{flex:1}
+
+  #chat{flex:1;overflow-y:auto;padding:14px;display:none;flex-direction:column;gap:10px}
+  .msg{max-width:86%;padding:10px 13px;border-radius:14px;font-size:15px;word-break:break-word}
+  .msg.me{align-self:flex-end;background:var(--acc);color:#fff;border-bottom-right-radius:4px}
+  .msg.ai{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:4px}
+  .msg.sys{align-self:center;background:transparent;color:var(--dim);font-size:12px;padding:4px}
+  .msg .lbl{display:block;font-size:11px;opacity:.65;margin-bottom:3px}
+
+  footer{
+    padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--line);background:var(--panel);
+    display:flex;gap:10px;align-items:center;
+  }
+  button{
+    border:none;border-radius:12px;padding:13px 18px;font-size:15px;font-weight:600;
+    font-family:inherit;color:#fff;background:var(--acc);cursor:pointer;
+    transition:transform .08s,opacity .2s;
+  }
+  button:active{transform:scale(.97)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.ghost{background:var(--panel2);color:var(--fg);border:1px solid var(--line)}
+  button.on{background:var(--acc2)}
+  button.danger{background:var(--err)}
+  #micBtn{flex:1}
+  #shareBtn{flex:0 0 auto;padding:13px 16px}
+  #status{font-size:12px;color:var(--dim);padding:0 14px 8px;min-height:18px}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>Qwen Omni 语音助手</h1>
+  <button class="ghost" id="cfgBtn" style="padding:8px 14px;font-size:14px">设置</button>
+</header>
+
+<section id="cfg">
+  <label>业务空间 ID（Workspace ID）</label>
+  <input id="ws" placeholder="例如 llm-xxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false">
+  <div class="hint">阿里云百炼控制台 → 业务空间 → 复制空间 ID（形如 llm- 开头）</div>
+
+  <label>API Key（DASHSCOPE_API_KEY）</label>
+  <input id="key" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+  <div class="hint">只存在本机浏览器 localStorage，不会上传到任何服务器</div>
+
+  <div class="row">
+    <div>
+      <label>音色</label>
+      <input id="voice" value="Tina" autocomplete="off">
+    </div>
+    <div>
+      <label>地域</label>
+      <input id="region" value="cn-beijing" autocomplete="off">
+    </div>
+  </div>
+  <div class="hint">音色可选 Tina、longanlingxin 等；地域 cn-beijing 或 ap-southeast-1</div>
+
+  <label>人设提示词（instructions）</label>
+  <input id="inst" value="你是一个口语化的中文语音助手，回答简短直接，不要使用 Markdown 符号。" autocomplete="off">
+
+  <div style="margin-top:22px;display:flex;gap:10px">
+    <button id="saveBtn" style="flex:1">保存并开始</button>
+  </div>
+  <div class="hint" style="margin-top:14px">
+    首次使用需要允许麦克风权限。屏幕共享在华为/安卓 Chrome 上可用，iPhone 不支持。
+  </div>
+</section>
+
+<section id="chat"></section>
+<div id="status"></div>
+
+<footer style="display:none" id="bar">
+  <button id="micBtn">开始对话</button>
+  <button class="ghost" id="shareBtn">共享屏幕</button>
+</footer>
+
+<script>
+(() => {
+'use strict';
+
+const $ = id => document.getElementById(id);
+const cfg = {ws:$('ws'), key:$('key'), voice:$('voice'), region:$('region'), inst:$('inst')};
+let pc = null, dc = null, micStream = null, screenStream = null, videoSender = null;
+let running = false, aiBuf = '', meBuf = '';
+let audioCtxEl = null;
+
+/* ---------- 配置持久化 ---------- */
+function loadCfg(){
+  try{
+    const s = JSON.parse(localStorage.getItem('qwenOmniCfg') || '{}');
+    for (const k of ['ws','key','voice','region','inst']) if (s[k]) cfg[k].value = s[k];
+  }catch(e){}
+}
+function saveCfg(){
+  const s = {};
+  for (const k of ['ws','key','voice','region','inst']) s[k] = cfg[k].value.trim();
+  localStorage.setItem('qwenOmniCfg', JSON.stringify(s));
+}
+loadCfg();
+
+/* ---------- UI 辅助 ---------- */
+function setStatus(t, kind){
+  const el = $('status');
+  el.textContent = t || '';
+  el.style.color = kind === 'err' ? 'var(--err)' : kind === 'warn' ? 'var(--warn)' : 'var(--dim)';
+}
+function setDot(cls){ $('dot').className = 'dot' + (cls ? ' ' + cls : ''); }
+function addMsg(role, text, lbl){
+  const chat = $('chat');
+  const d = document.createElement('div');
+  d.className = 'msg ' + role;
+  if (lbl){ const s = document.createElement('span'); s.className='lbl'; s.textContent = lbl; d.appendChild(s); }
+  d.appendChild(document.createTextNode(text));
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+  return d;
+}
+function err(e){
+  console.error(e);
+  setStatus((e && e.message) ? e.message : String(e), 'err');
+}
+
+/* ---------- 建立 WebRTC 连接 ---------- */
+async function connect(){
+  const ws = cfg.ws.value.trim();
+  const key = cfg.key.value.trim();
+  const region = cfg.region.value.trim() || 'cn-beijing';
+  if (!ws || !key) throw new Error('请先填写业务空间 ID 和 API Key');
+
+  const base = `https://${ws}.${region}.maas.aliyuncs.com`;
+  const url = `${base}/api/v1/webrtc/realtime?model=qwen3.8-omni-flash-realtime`;
+
+  setStatus('正在获取麦克风...');
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: {echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1}
+  });
+
+  pc = new RTCPeerConnection({iceServers:[]});
+
+  // 本地音频发送
+  micStream.getTracks().forEach(t => pc.addTrack(t, micStream));
+
+  // 预留视频槽位（屏幕共享稍后 replaceTrack 填入）
+  const vt = pc.addTransceiver('video', {direction:'sendonly'});
+  videoSender = vt.sender;
+
+  // 事件通道：客户端自建用于发送；服务端会用固定名 txt 另建一条推送事件
+  const sendCh = pc.createDataChannel('oai-events');
+  dc = sendCh;
+  sendCh.onopen = () => { sendSessionUpdate(); setStatus('已连接，可以直接说话'); setDot('on'); };
+  sendCh.onmessage = onServerEvent;
+  sendCh.onclose = () => { setStatus('事件通道已关闭', 'warn'); };
+
+  pc.ondatachannel = (ev) => {
+    const ch = ev.channel;
+    ch.onmessage = onServerEvent;
+    ch.onopen = () => {
+      // 服务端通道就绪后补发一次会话配置
+      if (ch.label === 'txt') sendSessionUpdate();
+    };
+  };
+
+  // 接收模型语音
+  pc.ontrack = (ev) => {
+    if (ev.track.kind === 'audio'){
+      let a = audioCtxEl;
+      if (!a){
+        a = audioCtxEl = document.createElement('audio');
+        a.autoplay = true; a.playsInline = true; a.style.display='none';
+        document.body.appendChild(a);
+      }
+      a.srcObject = ev.streams[0];
+      a.play().catch(()=>{});
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    setStatus('连接状态：' + pc.connectionState);
+    if (pc.connectionState === 'failed' || pc.connectionState === 'closed'){
+      setDot(''); running = false; $('micBtn').textContent = '开始对话'; $('micBtn').classList.remove('on');
+    }
+  };
+
+  setStatus('正在建立 WebRTC 连接...');
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/sdp', 'Authorization':'Bearer ' + key},
+    body: offer.sdp
+  });
+  if (!resp.ok){
+    const t = await resp.text().catch(()=> '');
+    throw new Error(`握手失败 HTTP ${resp.status}：${t.slice(0,300)}`);
+  }
+  const answerSdp = await resp.text();
+  await pc.setRemoteDescription({type:'answer', sdp: answerSdp});
+}
+
+/* ---------- 会话配置 ---------- */
+function sendSessionUpdate(){
+  if (!dc || dc.readyState !== 'open') return;
+  dc.send(JSON.stringify({
+    type: 'session.update',
+    session: {
+      modalities: ['text','audio'],
+      voice: cfg.voice.value.trim() || 'Tina',
+      instructions: cfg.inst.value.trim(),
+      audio: {
+        input:  { format: { type:'pcm', sample_rate:16000 } },
+        output: { format: { type:'pcm', sample_rate:24000 } }
+      },
+      turn_detection: { type:'semantic_vad' }
+    }
+  }));
+}
+
+/* ---------- 服务端事件 ---------- */
+function onServerEvent(e){
+  let ev;
+  try { ev = JSON.parse(e.data); } catch(_) { return; }
+
+  switch (ev.type){
+    case 'session.updated':
+      setStatus('会话已就绪，说话就行');
+      break;
+
+    case 'input_audio_buffer.speech_started':
+      setDot('busy');
+      setStatus('听到了，正在听…');
+      // 用户开口 → 打断模型播报
+      if (audioCtxEl) { try { audioCtxEl.pause(); } catch(_){} }
+      break;
+
+    case 'input_audio_buffer.speech_stopped':
+      setStatus('思考中…');
+      break;
+
+    case 'conversation.item.input_audio_transcription.delta':
+      meBuf += (ev.delta || '');
+      break;
+
+    case 'conversation.item.input_audio_transcription.completed':
+      if (ev.transcript) addMsg('me', ev.transcript, '你');
+      else if (meBuf) addMsg('me', meBuf, '你');
+      meBuf = '';
+      break;
+
+    case 'response.audio_transcript.delta':
+      aiBuf += (ev.delta || '');
+      setStatus('回答中…');
+      break;
+
+    case 'response.audio_transcript.done':
+      if (ev.transcript || aiBuf){ addMsg('ai', ev.transcript || aiBuf, '助手'); aiBuf = ''; }
+      break;
+
+    case 'response.done':
+      setDot('on');
+      setStatus('可以继续说');
+      break;
+
+    case 'error':
+      setStatus('服务端错误：' + JSON.stringify(ev.error || ev).slice(0,200), 'err');
+      break;
+  }
+}
+
+/* ---------- 屏幕共享 ---------- */
+async function toggleScreen(){
+  const btn = $('shareBtn');
+  if (screenStream){
+    screenStream.getTracks().forEach(t => t.stop());
+    screenStream = null;
+    try { await videoSender.replaceTrack(null); } catch(_){}
+    btn.textContent = '共享屏幕';
+    btn.classList.remove('on');
+    setStatus('已停止屏幕共享');
+    return;
+  }
+  try{
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: {frameRate: 1, width: {ideal: 1280}, height: {ideal: 720}},
+      audio: false
+    });
+    const track = screenStream.getVideoTracks()[0];
+    track.onended = () => { screenStream = null; btn.textContent='共享屏幕'; btn.classList.remove('on'); };
+    await videoSender.replaceTrack(track);
+    btn.textContent = '停止共享';
+    btn.classList.add('on');
+    setStatus('屏幕共享中（1 帧/秒）');
+  }catch(e){
+    setStatus('屏幕共享被取消或不受支持', 'warn');
+    screenStream = null;
+  }
+}
+
+/* ---------- 开关 ---------- */
+async function start(){
+  $('chat').innerHTML = '';
+  $('chat').style.display = 'flex';
+  $('bar').style.display = 'flex';
+  $('cfg').style.display = 'none';
+  setDot('busy');
+  try{
+    await connect();
+    running = true;
+    $('micBtn').textContent = '结束对话';
+    $('micBtn').classList.add('on');
+  }catch(e){
+    err(e);
+    setDot('');
+    try { if (pc) pc.close(); } catch(_){}
+  }
+}
+async function stop(){
+  running = false;
+  try { if (screenStream) screenStream.getTracks().forEach(t=>t.stop()); } catch(_){}
+  try { if (micStream) micStream.getTracks().forEach(t=>t.stop()); } catch(_){}
+  try { if (pc) pc.close(); } catch(_){}
+  pc = dc = micStream = screenStream = videoSender = null;
+  if (audioCtxEl){ try{audioCtxEl.pause();}catch(_){} }
+  $('micBtn').textContent = '开始对话';
+  $('micBtn').classList.remove('on');
+  $('shareBtn').textContent = '共享屏幕';
+  $('shareBtn').classList.remove('on');
+  setDot('');
+  setStatus('已断开');
+}
+
+/* ---------- 事件绑定 ---------- */
+$('saveBtn').onclick = () => {
+  if (!cfg.ws.value.trim() || !cfg.key.value.trim()){ setStatus('业务空间 ID 和 API Key 必填', 'err'); return; }
+  saveCfg(); start();
+};
+$('cfgBtn').onclick = () => {
+  const showing = $('cfg').style.display !== 'none';
+  if (showing && running){
+    $('cfg').style.display = 'none'; $('chat').style.display='flex'; $('bar').style.display='flex';
+  } else {
+    $('cfg').style.display = 'block'; $('chat').style.display = 'none'; $('bar').style.display='none';
+  }
+};
+$('micBtn').onclick = () => { running ? stop() : start(); };
+$('shareBtn').onclick = toggleScreen;
+
+window.addEventListener('beforeunload', () => { try{ if(pc) pc.close(); }catch(_){} });
+})();
+</script>
+</body>
+</html>
